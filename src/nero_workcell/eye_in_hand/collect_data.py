@@ -188,12 +188,9 @@ def main():
     corner_long = config['checkerboard']['corner_point_long']
     corner_short = config['checkerboard']['corner_point_short']
     
-    # 机械臂参数
-    ROBOT_IP_CONFIG = config['robot']['ip']
-    
     # 连接 Nero 机械臂
-    logger_.info(f"连接 Nero 机械臂: {ROBOT_IP_CONFIG}")
-    robot = NeroController(ROBOT_IP_CONFIG)
+    logger_.info("连接 Nero 机械臂...")
+    robot = NeroController()
     
     if not robot.connect():
         logger_.error("无法连接机械臂!")
@@ -344,9 +341,13 @@ def main():
                         logger_.warning("可能是标定板方向反了，建议检查！")
                 
                 # 采集数据
-                pose = robot.get_current_pose()
+                try:
+                    pose = robot.get_flange_pose()
+                except Exception as e:
+                    logger_.error(f"获取位姿异常: {e}")
+                    pose = None
                 
-                if pose:
+                if pose and len(pose) >= 6:
                     # 保存位姿
                     pose_str = ','.join([str(p) for p in pose])
                     with open(poses_file, 'a+') as f:
