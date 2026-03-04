@@ -29,10 +29,10 @@ class NeroController:
             self.robot.connect()
             self.robot.enable()
             
-            # 初始化末端执行器 (REVO2)
+            # 初始化末端执行器 (AGX_GRIPPER)
             try:
                 self.end_effector = self.robot.init_effector(self.robot.OPTIONS.EFFECTOR.AGX_GRIPPER)
-                logger.info("已初始化 REVO2 末端执行器")
+                logger.info("已初始化 AGX_GRIPPER 末端执行器")
             except Exception as e:
                 logger.warning(f"初始化末端执行器失败 (可能未安装或型号不匹配): {e}")
             
@@ -118,3 +118,18 @@ class NeroController:
             target_pose[i] += deltas[i]
 
         self.move_p(target_pose)
+
+    def control_gripper(self, width: float, force: float = 1.0):
+        """
+        控制 AGX Gripper
+        :param width: 开口宽度 (米), 范围 [0.0, 0.1]
+        :param force: 夹持力 (牛顿), 范围 [0.0, 3.0]
+        """
+        if not self.is_connected() or self.end_effector is None:
+            logger.warning("无法控制夹爪: 未连接或未初始化")
+            return
+
+        try:
+            self.end_effector.move_gripper(width=width, force=force)
+        except Exception as e:
+            logger.error(f"夹爪控制失败: {e}")
