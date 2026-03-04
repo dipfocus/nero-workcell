@@ -1,0 +1,17 @@
+{
+    "checkerboard": {
+        "corner_point_long": 7,
+        "corner_point_short": 10,
+        "corner_point_size": 0.015,
+        "unit": "meters"
+    },
+    "camera": {
+        "width": 1280,
+        "height": 720,
+        "fps": 30
+    },
+    "robot": {
+        "channel": "can0",
+        "type": "nero"
+    }
+}
