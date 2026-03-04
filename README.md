@@ -42,6 +42,12 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+3. 安装项目本体（可编辑模式，推荐开发使用）：
+
+```bash
+pip install -e .
+```
+
 > 说明  
 > - `python-can` 版本要求高于 `3.3.4`。  
 > - `pyAgxArm` 来自 GitHub 源码安装，网络需可访问。  
@@ -68,7 +74,7 @@ python tools/get_realsense_serial.py --json
 在仓库根目录执行：
 
 ```bash
-python src/nero_workcell/tasks/object_follower.py --target bottle --model yolov8n.pt --conf 0.5
+python -m nero_workcell.tasks.object_follower --target bottle --model yolov8n.pt --conf 0.5
 ```
 
 参数说明：
@@ -105,12 +111,11 @@ python src/nero_workcell/tasks/object_follower.py --target bottle --model yolov8
 }
 ```
 
-然后进入目录执行数据采集与标定计算：
+在仓库根目录执行数据采集与标定计算：
 
 ```bash
-cd src/nero_workcell/eye_in_hand
-python collect_data.py
-python eye_in_hand.py --no-show
+python -m nero_workcell.eye_in_hand.collect_data
+python -m nero_workcell.eye_in_hand.eye_in_hand --no-show
 ```
 
 说明：

@@ -5,29 +5,19 @@
 结合 RealSense 相机和 YOLO 模型，控制机械臂跟随指定物体。
 
 用法:
-    python object_follower.py --target bottle --conf 0.5
+    python -m nero_workcell.tasks.object_follower --target bottle --conf 0.5
 """
 
-import sys
 import time
 import logging
 import argparse
-from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 import pyrealsense2 as rs
 from ultralytics import YOLO
 
-# 添加项目根目录到 sys.path 以导入 core 模块
-CURRENT_DIR = Path(__file__).resolve().parent
-WORKCELL_DIR = CURRENT_DIR.parent  # src/nero_workcell
-if str(WORKCELL_DIR) not in sys.path:
-    sys.path.insert(0, str(WORKCELL_DIR))
-
-from core import RealSenseCamera
-from core.nero_controller import NeroController
+from nero_workcell.core import NeroController, RealSenseCamera
 
 logger = logging.getLogger(__name__)
 

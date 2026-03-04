@@ -20,6 +20,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import json
 import argparse
+from pathlib import Path
 
 np.set_printoptions(precision=8, suppress=True)
 
@@ -194,8 +195,8 @@ def main():
     
     show_images = not args.no_show
     
-    # 读取配置（在当前目录下）
-    config_file = "./config.json"
+    # 读取配置（与脚本同目录）
+    config_file = Path(__file__).with_name("config.json")
     with open(config_file, 'r') as f:
         config = json.load(f)
     

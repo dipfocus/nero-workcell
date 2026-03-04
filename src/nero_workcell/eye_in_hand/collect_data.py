@@ -15,7 +15,6 @@
 """
 
 import os
-import sys
 import json
 import logging
 import time
@@ -28,17 +27,15 @@ from scipy.spatial.transform import Rotation as R
 
 import pyrealsense2 as rs
 
-# 添加 project 目录到 PYTHONPATH，确保可导入 core/utils
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
-from core import RealSenseCamera
-from core.nero_controller import NeroController
+from nero_workcell.core import NeroController, RealSenseCamera
 
-from utils.log_setting import CommonLog
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 logger_ = logging.getLogger(__name__)
-logger_ = CommonLog(logger_)
 
 
 def get_connected_cameras():
@@ -177,8 +174,8 @@ def draw_corners_with_info(image, corners, corner_long, corner_short, detected):
 def main():
     """主函数"""
     
-    # 从配置文件读取参数（在当前目录下）
-    config_file = "./config.json"
+    # 从配置文件读取参数（与脚本同目录）
+    config_file = Path(__file__).with_name("config.json")
     with open(config_file, 'r', encoding='utf-8') as f:
         config = json.load(f)
     
