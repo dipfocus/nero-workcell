@@ -293,9 +293,11 @@ class ObjectFollower:
         self.is_running = True
         
         logger.info(f"Starting follow task, target: {self.target_class}")
+        logger.info("Press 's' to start following after target is detected")
         logger.info("Press 'q' to exit")
 
         center_x, center_y = self.width // 2, self.height // 2
+        follow_enabled = False
 
         try:
             while self.is_running:
@@ -304,23 +306,33 @@ class ObjectFollower:
                     self.pid_x.reset()
                     self.pid_y.reset()
                     self.pid_z.reset()
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
                     continue
                 
                 display_img = result["color"].copy()
                 target = result["target"]
                 
-                    
-                # Execute follow control.
-                self.follow_target(target)
+                if follow_enabled:
+                    # Execute follow control after manual trigger.
+                    self.follow_target(target)
 
                 # Draw image-center crosshair.
                 cv2.line(display_img, (center_x-20, center_y), (center_x+20, center_y), (255, 0, 0), 1)
                 cv2.line(display_img, (center_x, center_y-20), (center_x, center_y+20), (255, 0, 0), 1)
+                status = "FOLLOWING" if follow_enabled else "DETECTED: press 's' to follow"
+                status_color = (0, 255, 0) if follow_enabled else (0, 255, 255)
+                cv2.putText(display_img, status, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
 
                 cv2.imshow("Object Follower 3D", display_img)
-                
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     break
+                if key == ord('s') and not follow_enabled:
+                    follow_enabled = True
+                    logger.info("Follow triggered by key 's'")
+                    self.follow_target(target)
 
         finally:
             self.camera.stop()
