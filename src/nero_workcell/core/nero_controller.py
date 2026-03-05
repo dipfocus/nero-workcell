@@ -1,5 +1,5 @@
 """
-Nero 机械臂控制器封装
+Nero robot arm controller wrapper.
 """
 import logging
 from typing import Optional, List
@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 class NeroController:
     def __init__(self, channel: str = "can0", robot_type: str = "nero"):
         """
-        初始化控制器
-        :param channel: CAN通道 (如 "can0", "can")
-        :param robot: 机械臂型号 (默认 "nero")
+        Initialize the controller.
+
+        :param channel: CAN channel (for example, "can0", "can")
+        :param robot_type: Robot model (default: "nero")
         """
         self.channel = channel
         self.robot_type = robot_type
@@ -23,7 +24,7 @@ class NeroController:
         self._connected = False
 
     def connect(self) -> bool:
-        """连接机械臂"""
+        """Connect to the robot arm."""
         try:
             cfg = create_agx_arm_config(robot=self.robot_type, comm="can", channel=self.channel)
             
@@ -31,33 +32,33 @@ class NeroController:
             self.robot.connect()
             self.robot.enable()
             
-            # 初始化末端执行器 (AGX_GRIPPER)
+            # Initialize end effector (AGX_GRIPPER).
             try:
                 self.end_effector = self.robot.init_effector(self.robot.OPTIONS.EFFECTOR.AGX_GRIPPER)
-                logger.info("已初始化 AGX_GRIPPER 末端执行器")
+                logger.info("AGX_GRIPPER end effector initialized")
             except Exception as e:
-                logger.warning(f"初始化末端执行器失败 (可能未安装或型号不匹配): {e}")
+                logger.warning(f"Failed to initialize end effector (possibly not installed or model mismatch): {e}")
             
             self._connected = True
-            logger.info(f"已连接到 Nero 机械臂: {self.channel}")
+            logger.info(f"Connected to Nero robot arm: {self.channel}")
             return True
         except Exception as e:
-            logger.error(f"连接 Nero 机械臂失败: {e}")
+            logger.error(f"Failed to connect to Nero robot arm: {e}")
             self._connected = False
             return False
 
     def disconnect(self):
-        """断开连接"""
+        """Disconnect from the robot."""
         self._connected = False
         self.robot = None
         self.end_effector = None
-        logger.info("已断开 Nero 机械臂连接")
+        logger.info("Disconnected from Nero robot arm")
 
     def is_connected(self) -> bool:
         return self._connected and self.robot is not None
 
     def get_flange_pose(self) -> Optional[np.ndarray]:
-        """获取法兰相对于基座的齐次变换矩阵 (4x4)"""
+        """Get the homogeneous transform (4x4) of flange relative to base."""
         if not self.is_connected():
             return None
         try:
@@ -72,13 +73,13 @@ class NeroController:
             matrix[:3, 3] = [x, y, z]
         
         except Exception as e:
-            logger.error(f"获取法兰位姿失败: {e}")
+            logger.error(f"Failed to get flange pose: {e}")
             return None
         return matrix
 
     def get_tcp_pose(self) -> Optional[List[float]]:
         """
-        获取机械臂 TCP 位姿 [x, y, z, r, p, y]
+        Get robot TCP pose as [x, y, z, roll, pitch, yaw].
         """
         if not self.is_connected():
             return None
@@ -88,12 +89,13 @@ class NeroController:
                 return pose.msg
             return None
         except Exception as e:
-            logger.error(f"获取 TCP 位姿失败: {e}")
+            logger.error(f"Failed to get TCP pose: {e}")
             return None
 
     def move_p(self, pose: List[float]):
         """
-        发送笛卡尔空间点到点运动指令
+        Send a Cartesian point-to-point motion command.
+
         :param pose: [x, y, z, r, p, y]
         """
         if not self.is_connected():
@@ -101,14 +103,15 @@ class NeroController:
         try:
             self.robot.move_p(pose)
         except Exception as e:
-            logger.error(f"发送运动指令失败: {e}")
+            logger.error(f"Failed to send motion command: {e}")
 
     def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, 
                       dr: float = 0.0, dp: float = 0.0, dyaw: float = 0.0):
         """
-        相对当前 TCP 位姿进行移动
-        :param dx, dy, dz: 位置增量 (米)
-        :param dr, dp, dyaw: 姿态增量 (弧度)
+        Move relative to the current TCP pose.
+
+        :param dx, dy, dz: Position deltas (meters)
+        :param dr, dp, dyaw: Orientation deltas (radians)
         """
         if not self.is_connected():
             return
@@ -117,7 +120,8 @@ class NeroController:
         if current_pose is None:
             return
 
-        # 计算目标位姿 (简单的线性叠加，姿态叠加在小角度下近似可用)
+        # Compute target pose by linear delta composition.
+        # Orientation composition is an approximation for small angles.
         target_pose = list(current_pose)
         deltas = [dx, dy, dz, dr, dp, dyaw]
         for i in range(6):
@@ -127,15 +131,16 @@ class NeroController:
 
     def control_gripper(self, width: float, force: float = 1.0):
         """
-        控制 AGX Gripper
-        :param width: 开口宽度 (米), 范围 [0.0, 0.1]
-        :param force: 夹持力 (牛顿), 范围 [0.0, 3.0]
+        Control the AGX gripper.
+
+        :param width: Jaw width (meters), range [0.0, 0.1]
+        :param force: Gripping force (newtons), range [0.0, 3.0]
         """
         if not self.is_connected() or self.end_effector is None:
-            logger.warning("无法控制夹爪: 未连接或未初始化")
+            logger.warning("Cannot control gripper: robot not connected or end effector not initialized")
             return
 
         try:
             self.end_effector.move_gripper(width=width, force=force)
         except Exception as e:
-            logger.error(f"夹爪控制失败: {e}")
+            logger.error(f"Gripper control failed: {e}")

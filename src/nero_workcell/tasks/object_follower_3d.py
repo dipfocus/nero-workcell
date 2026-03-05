@@ -1,73 +1,30 @@
 #!/usr/bin/env python3
 # coding=utf-8
 """
-物体跟随任务 (Visual Servoing)
-结合 RealSense 相机和 YOLO 模型，控制机械臂跟随指定物体。
+Object following task (visual servoing).
+Uses RealSense and YOLO to control the robot arm to follow a target object.
 
-用法:
+Usage:
     python -m nero_workcell.tasks.object_follower --target bottle --conf 0.5
 """
 
-import time
 import logging
 import argparse
-from typing import List
+import json
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
-from nero_workcell.core.target_object import TargetObject
-from nero_workcell.utils.common import transform_to_base
 import pyrealsense2 as rs
 from ultralytics import YOLO
 from scipy.spatial.transform import Rotation as R
 
-from nero_workcell.core import NeroController, RealSenseCamera
+from nero_workcell.core import NeroController, PIDController, RealSenseCamera
+from nero_workcell.core.target_object import TargetObject
 
 logger = logging.getLogger(__name__)
-
-
-class PIDController:
-    """简单的 PID 控制器，用于计算运动速度"""
-    def __init__(self, kp: float, ki: float, kd: float, max_out: float = 0.1):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.max_out = max_out
-        self.prev_error = 0.0
-        self.integral = 0.0
-        self.last_time = time.time()
-
-    def compute(self, error: float) -> float:
-        current_time = time.time()
-        dt = current_time - self.last_time
-        if dt <= 0:
-            return 0.0
-
-        # 比例项
-        p_term = self.kp * error
-
-        # 积分项
-        self.integral += error * dt
-        i_term = self.ki * self.integral
-
-        # 微分项
-        derivative = (error - self.prev_error) / dt
-        d_term = self.kd * derivative
-
-        # 计算输出
-        output = p_term + i_term + d_term
-        
-        # 限幅
-        output = np.clip(output, -self.max_out, self.max_out)
-
-        self.prev_error = error
-        self.last_time = current_time
-        return output
-
-    def reset(self):
-        self.prev_error = 0.0
-        self.integral = 0.0
-        self.last_time = time.time()
 
 
 class ObjectFollower:
@@ -75,87 +32,85 @@ class ObjectFollower:
                  target_class: str, 
                  robot_channel: str = "can0",
                  model_path: str = 'yolov8n.pt',
-                 conf_threshold: float = 0.5):
+                 conf_threshold: float = 0.5,
+                 target_distance: float = 0.3):
         
         self.target_class = target_class
         self.conf_threshold = conf_threshold
+        self.target_distance = target_distance
         
-        # 初始化相机
+        # Initialize camera.
         self.width = 640
         self.height = 480
         self.camera = None
+        self.fx = 0.0
+        self.fy = 0.0
+        self.cx = 0.0
+        self.cy = 0.0
         
-        # 初始化 YOLO
-        logger.info(f"加载 YOLO 模型: {model_path}")
+        # Initialize YOLO.
+        logger.info(f"Loading YOLO model: {model_path}")
         self.model = YOLO(model_path)
 
-        # 获取目标类别的 ID
-        self.target_class_id = None
-        for idx, name in self.model.names.items():
-            if name == self.target_class:
-                self.target_class_id = idx
-                break
-        if self.target_class_id is None:
-            logger.warning(f"目标类别 '{self.target_class}' 未在模型中找到。")
-        
-        # 初始化 PID 控制器 (X轴和Y轴)
-        # 参数需要根据实际机械臂响应速度进行调整
         self.pid_x = PIDController(kp=0.0005, ki=0.0, kd=0.0001, max_out=0.05) # 这里的单位是 m/s
         self.pid_y = PIDController(kp=0.0005, ki=0.0, kd=0.0001, max_out=0.05)
+        self.pid_z = PIDController(kp=0.0005, ki=0.0, kd=0.0001, max_out=0.05)
         
-        # 机械臂实例
+        # Robot controller instance.
         self.robot = NeroController(robot_channel, "nero")
         self.is_running = False
 
     def setup_camera(self):
-        """自动查找并连接第一个 RealSense 相机"""
+        """Auto-discover and connect to the first available RealSense camera."""
         ctx = rs.context()
         devices = ctx.query_devices()
         if len(devices) == 0:
             raise RuntimeError("未找到 RealSense 相机")
         
         camera_serial = devices[0].get_info(rs.camera_info.serial_number)
-        logger.info(f"使用相机: {camera_serial}")
+        logger.info(f"Using camera: {camera_serial}")
         self.camera = RealSenseCamera(width=self.width, height=self.height, fps=30, serial_number=camera_serial) 
         
         if not self.camera.start():
             raise RuntimeError("相机启动失败")
+        
+        # Read and store intrinsics.
+        intrinsics = self.camera.get_intrinsics()
+        self.fx = intrinsics.get('fx', 0)
+        self.fy = intrinsics.get('fy', 0)
+        self.cx = intrinsics.get('cx', 0)
+        self.cy = intrinsics.get('cy', 0)
+        logger.info(f"Camera intrinsics: fx={self.fx}, fy={self.fy}, cx={self.cx}, cy={self.cy}")
 
     def move_robot(self, vx: float, vy: float):
         """
-        控制机械臂移动
-        vx, vy: PID 输出的控制量，此处作为位移增量处理
-        
-        注意：这里假设了相机坐标系与机械臂末端坐标系的关系。
-        通常 RealSense: +X 右, +Y 下, +Z 前
-        机械臂末端: 需要根据实际安装确认。
-        这里假设：
-        - 图像 X 轴偏差 -> 控制机械臂沿 Y 轴移动 (左右)
-        - 图像 Y 轴偏差 -> 控制机械臂沿 X 轴移动 (上下/前后，取决于安装)
-        
-        *请根据实际情况修改轴映射*
+        Move the robot using PID outputs as relative increments.
+
+        Assumed mapping between camera frame and robot frame:
+        - Image X error -> robot Y motion
+        - Image Y error -> robot X motion
+
+        Adjust axis mapping for your real installation.
         """
         if not self.robot.is_connected():
             return
 
-        # 简单的死区设置，避免微小抖动
+        # Deadband to suppress tiny jitter.
         if abs(vx) < 0.001 and abs(vy) < 0.001:
             return
 
         try:
-            # 坐标系映射 (根据实际安装调整)
-            # 假设: 图像 X+ (右) -> 机械臂 Y-
-            # 假设: 图像 Y+ (下) -> 机械臂 X-
+            # Example axis mapping. Tune signs per installation.
             
             scale = 0.5
             dx = -vy * scale
             dy = -vx * scale
             
-            # 发送相对运动指令
+            # Send relative motion command.
             self.robot.move_relative(dx=dx, dy=dy)
             
         except Exception as e:
-            logger.error(f"运动控制失败: {e}")
+            logger.error(f"Motion control failed: {e}")
     def _yolo_detect(self, color: np.ndarray, depth: np.ndarray) -> List[TargetObject]:
         """
         Run object detection and project valid detections into the camera frame.
@@ -180,11 +135,12 @@ class ObjectFollower:
         for result in results:
             for box in result.boxes:
                 cls_id = int(box.cls[0])
+                cls_name = self.model.names[cls_id]
                 conf = float(box.conf[0])
 
-                if conf < self.detection_confidence:
+                if conf < self.conf_threshold:
                     continue
-                if cls_id not in [self.bottle_class_id, self.bowl_class_id]:
+                if cls_name != self.target_class:
                     continue
 
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
@@ -198,10 +154,9 @@ class ObjectFollower:
                     continue
 
                 p_cam = np.array([(cu - self.cx) * d / self.fx, (cv_pt - self.cy) * d / self.fy, d])
-                obj_name = "bottle" if cls_id == self.bottle_class_id else "bowl"
                 target_objects.append(
                     TargetObject(
-                        name=obj_name,
+                        name=cls_name,
                         class_id=cls_id,
                         bbox=(x1, y1, x2, y2),
                         center=(cu, cv_pt),
@@ -214,11 +169,11 @@ class ObjectFollower:
         logger.debug("VisionDetector.detect: %d camera objects detected", len(target_objects))
         return target_objects
 
-    def _pick_best_target_by_class(target_objects_base, class_id):
-        """从同类别候选中选取置信度最高的目标（基座坐标系）。"""
+    def _pick_best_target(self, detected_targets: List[TargetObject]) -> Optional[TargetObject]:
+        """Select the highest-confidence target among candidates of the same class."""
         candidates = [
-            obj for obj in target_objects_base
-            if obj.class_id == class_id and obj.frame == "base"
+            obj for obj in detected_targets
+            if obj.name == self.target_class
         ]
         if not candidates:
             return None
@@ -226,150 +181,143 @@ class ObjectFollower:
 
     def detect_object(self):
         """
-        单次采集并识别目标，返回基座坐标系中的位置。
+        Capture one frame and detect the target in base coordinates.
 
         Returns:
-            dict | None: 包含基座坐标系下的目标位置、检测对象列表等信息；
-            当读取帧或获取末端位姿失败时返回 None。
+            dict | None: A payload with color image and base-frame target object.
+            Returns None when frame read fails, target is missing, or pose read fails.
         """
-        # 读取图像
+        # Read image and depth frame.
         frame = self.camera.read_frame()
         color, depth = frame["color"], frame["depth"]
         if color is None or depth is None:
             return None
-        # YOLO检测
-        detected_objects_camera = self._yolo_detect(color, depth)
+        # Run YOLO detection.
+        detected_targets = self._yolo_detect(color, depth)
+        best_target = self._pick_best_target(detected_targets)
+        if best_target is None:
+            return None
 
-        # 获取机械臂末端位姿
-        try:
-            # 获取 Nero 机械臂法兰位姿 [x, y, z, roll, pitch, yaw] (单位: m, rad)
-            T_gripper2base = self.robot.get_flange_pose()
-            if T_gripper2base is None:
-                logger.warning("[检测] 获取位姿失败: 无数据")
-                return None
-        except Exception as e:
-            logger.warning(f"[检测] 获取位姿失败: {e}")
+        # Get current flange pose.
+        T_gripper2base = self.robot.get_flange_pose()
+        if T_gripper2base is None:
+            logger.warning("[detect] Failed to get flange pose: no data")
             return None
 
         T_cam2base = T_gripper2base @ self.T_cam2gripper
-        detected_objects_base = transform_to_base(
-            detected_objects_camera,
-            T_cam2base,
-        )
-
-        bottle_obj = _pick_best_target_by_class(detected_objects_base, class_id)
         
-        positions_base = {
-            "bottle": None if bottle_obj is None else np.array(bottle_obj.position, dtype=float),
-        }
+        # p_base = T_cam2base * p_cam
+        p_cam_homo = np.append(best_target.position, 1.0)
+        p_base = (T_cam2base @ p_cam_homo)[:3]
+        detected_target = TargetObject(
+            name=best_target.name, 
+            class_id=best_target.class_id, 
+            bbox=best_target.bbox,
+            center=best_target.center, 
+            position=p_base, 
+            conf=best_target.conf, 
+            frame="base"
+        )
 
         return {
             "color": color,
-            "depth": depth,
-            "T_cam2base": T_cam2base.copy(),
-            "target_objects_camera": detected_objects_camera,
-            "target_objects_base": detected_objects_base,
-            "targets_base": {
-                "bottle": bottle_obj,
-            },
-            "positions_base": positions_base,
-            "gripper_pos": T_gripper2base[:3, 3].copy(),
-            "timestamp": time.time(),
+            "target": detected_target,
         }
-    def generate_waypoints(target_pos):
-        """生成静态抓取路径点序列（基于固定姿态，目标 3D 点位）。"""
-        approach_height_offset = min(APPROACH_HEIGHT_OFFSET, STATIC_PICK_APPROACH_HEIGHT_OFFSET)
-        waypoints = [
-            ("pre_grasp", compute_target_with_offset(target_pos, APPROACH_HEIGHT_OFFSET)),
-            ("approach", compute_target_with_offset(target_pos, approach_height_offset)),
-            ("grasp", compute_target_with_offset(target_pos, GRASP_HEIGHT_OFFSET)),
-            ("retreat", compute_target_with_offset(target_pos, LIFT_HEIGHT_OFFSET)),
-        ]
-        return waypoints
-    
-    def execute_waypoints(self, waypoints, tilted=True, blocking=True, max_step=WAYPOINT_MAX_STEP):
-        """顺序执行路径点，并做简单步长约束检查。"""
-        current_pos = robot.get_current_pose()
-        prev_pos = np.array(current_pos, dtype=float)
 
-        for name, target_pos in waypoints:
-            target_pos = np.array(target_pos, dtype=float)
-            step = np.linalg.norm(target_pos - prev_pos)
-            if max_step is not None and step > max_step:
-                logger.warning(
-                    f"路径点步长过大: {name}, step={step:.3f}m > {max_step:.3f}m"
-                )
-                return False
+    def follow_target(self, target: TargetObject):
+        """
+        Follow a target point in base coordinates (no grasping).
 
-            logger.info(
-                f"执行路径点 {name}: "
-                f"({target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f})"
-            )
-            if not robot.move_to(target_pos, tilted=tilted, blocking=blocking):
-                logger.warning(f"执行路径点失败: {name}")
-                return False
+        Constraints:
+        - target.position must be in the base frame.
+        - Desired TCP is self.target_distance meters above the target point.
+        """
+        if not self.robot.is_connected():
+            return
 
-            prev_pos = target_pos
+        if target.frame != "base":
+            logger.warning("[follow] Target frame is not base, skipping frame: %s", target.frame)
+            return
 
-        return True
+        tcp_pose = self.robot.get_tcp_pose()
+        if tcp_pose is None:
+            logger.warning("[follow] Failed to get TCP pose")
+            return
 
-    def follow_object(self, object):
-        bottle_pos = np.array(bottle_pos, dtype=float)
-        bottle_waypoints = generate_waypoints(np.array(bottle_pos, dtype=float))
-        execute_waypoints(self.robot, bottle_waypoints)
+        tcp_pos = np.array(tcp_pose[:3], dtype=float)
+        target_pos = np.array(target.position, dtype=float)
 
+        desired_pos = target_pos.copy()
+        desired_pos[2] += self.target_distance
+
+        error = desired_pos - tcp_pos
+        err_x, err_y, err_z = error.tolist()
+
+        deadband = 0.005  # 5mm
+        if abs(err_x) < deadband and abs(err_y) < deadband and abs(err_z) < deadband:
+            return
+
+        # Reuse PID gains from 2D follower; scale error to millimeters.
+        err_scale = 1000.0
+        cmd_x = float(self.pid_x.compute(err_x * err_scale))
+        cmd_y = float(self.pid_y.compute(err_y * err_scale))
+        cmd_z = float(self.pid_z.compute(err_z * err_scale))
+
+        max_step_z = 0.03
+        cmd_z = float(np.clip(cmd_z, -max_step_z, max_step_z))
+
+        self.robot.move_relative(dx=cmd_x, dy=cmd_y, dz=cmd_z)
 
     def run(self):
-        # 1. 加载手眼标定
-        calib_file = "configs" / "eye_in_hand_calibration.json"
-        self.T_cam2gripper = load_eye_in_hand_calibration(calib_file)
-        # 2. 启动相机，加载相机内参
-        self.setup_camera()
-        intrinsics = self.camera.get_intrinsics()
+        # 1. Load eye-in-hand calibration.
+        calib_file = Path("configs/eye_in_hand_calibration.json")
+        if not calib_file.exists():
+             # Fallback or check current directory
+             calib_file = Path("eye_in_hand_calibration.json")
 
-        # 3. 连接机械臂
+        try:
+            with open(calib_file, 'r') as f:
+                calib_data = json.load(f)
+            self.T_cam2gripper = np.array(calib_data["homogeneous_matrix"])
+        except Exception as e:
+            logger.error(f"Failed to load calibration file: {e}")
+            return
+
+        # 2. Start camera and load intrinsics.
+        self.setup_camera()
+
+        # 3. Connect robot.
         if not self.robot.connect():
-            logger.error("机械臂连接失败，任务终止")
+            logger.error("Robot connection failed, task aborted")
             return
         self.is_running = True
         
-        logger.info(f"开始跟随任务，目标: {self.target_class}")
-        logger.info("按 'q' 退出")
+        logger.info(f"Starting follow task, target: {self.target_class}")
+        logger.info("Press 'q' to exit")
 
         center_x, center_y = self.width // 2, self.height // 2
 
         try:
             while self.is_running:
-                
-                target_box = None
-                max_conf = 0
-
-                object = self.detect_object()
-                if object is None:
-                    logger.debug("没有检测到目标")
+                result = self.detect_object()
+                if result is None:
+                    self.pid_x.reset()
+                    self.pid_y.reset()
+                    self.pid_z.reset()
                     continue
                 
-                cv2.imshow('Detection (Eye-in-Hand)', object["color"])
-                bottle_pos = scene["positions_base"]["bottle"]
-                logger.info("瓶子和碗已就绪，按's'确认，开始执行任务...")
-                self.follow_object(bottle_pos)
-
-                task_ok = execute_grasp_task(
-                    robot,
-                    camera,
-                    vision_detector,
-                    T_cam2gripper,
-                    bottle_pos,
-                    bowl_pos,
-                )
+                display_img = result["color"].copy()
+                target = result["target"]
                 
-                
+                    
+                # Execute follow control.
+                self.follow_target(target)
 
-                # 显示中心十字
+                # Draw image-center crosshair.
                 cv2.line(display_img, (center_x-20, center_y), (center_x+20, center_y), (255, 0, 0), 1)
                 cv2.line(display_img, (center_x, center_y-20), (center_x, center_y+20), (255, 0, 0), 1)
 
-                cv2.imshow("Object Follower", display_img)
+                cv2.imshow("Object Follower 3D", display_img)
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -377,7 +325,7 @@ class ObjectFollower:
         finally:
             self.camera.stop()
             cv2.destroyAllWindows()
-            logger.info("任务结束")
+            logger.info("Task finished")
 
 
 def main():
@@ -388,7 +336,7 @@ def main():
     
     args = parser.parse_args()
     
-    # 配置日志
+    # Configure logging.
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s',
