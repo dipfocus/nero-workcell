@@ -1,0 +1,18 @@
+{
+    "checkerboard": {
+        "corner_point_long": 9,
+        "corner_point_short": 13,
+        "corner_point_size": 0.04,
+        "unit": "meters",
+        "description": "棋盘格标定板参数: 9x13角点, 40mm方格"
+    },
+    "camera": {
+        "width": 1280,
+        "height": 720,
+        "fps": 30
+    },
+    "robot": {
+        "channel": "can0",
+        "type": "nero"
+    }
+}
