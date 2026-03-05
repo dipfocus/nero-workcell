@@ -162,11 +162,13 @@ class ObjectFollower:
         frame = self.camera.read_frame()
         color, depth = frame["color"], frame["depth"]
         if color is None or depth is None:
+            logger.warning("[detect] Frame read failed")
             return None
         # Run YOLO detection.
         detected_targets = self._yolo_detect(color, depth)
         best_target = self._pick_best_target(detected_targets)
         if best_target is None:
+            logger.warning("[detect] No target detected")
             return {"color": color, "target": None}
 
         # Get current flange pose.
@@ -189,6 +191,8 @@ class ObjectFollower:
             conf=best_target.conf, 
             frame="base"
         )
+
+        logger.info("[detect] Target detected: %s", detected_target)
 
         return {
             "color": color,
