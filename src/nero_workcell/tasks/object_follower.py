@@ -12,7 +12,6 @@ import logging
 import argparse
 
 import cv2
-import numpy as np
 import pyrealsense2 as rs
 from ultralytics import YOLO
 
@@ -35,8 +34,7 @@ class ObjectFollower:
         # Initialize camera.
         self.width = 640
         self.height = 480
-        self.camera = RealSenseCamera(width=self.width, height=self.height, fps=30, serial_number="") 
-        # NOTE: serial_number is set later by auto-discovery before start().
+        self.camera = None
         
         # Initialize YOLO.
         logger.info(f"Loading YOLO model: {model_path}")
@@ -59,8 +57,13 @@ class ObjectFollower:
             raise RuntimeError("未找到 RealSense 相机")
         
         serial = devices[0].get_info(rs.camera_info.serial_number)
-        self.camera.serial_number = serial
         logger.info(f"Using camera: {serial}")
+        self.camera = RealSenseCamera(
+            width=self.width,
+            height=self.height,
+            fps=30,
+            serial_number=serial,
+        )
         
         if not self.camera.start():
             raise RuntimeError("相机启动失败")
@@ -103,9 +106,11 @@ class ObjectFollower:
         self.is_running = True
         
         logger.info(f"Starting follow task, target: {self.target_class}")
+        logger.info("Press 's' to start following")
         logger.info("Press 'q' to exit")
 
         center_x, center_y = self.width // 2, self.height // 2
+        follow_enabled = False
 
         try:
             while self.is_running:
@@ -113,6 +118,12 @@ class ObjectFollower:
                 frame_data = self.camera.read_frame()
                 color_image = frame_data['color']
                 if color_image is None:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    if key == ord('s') and not follow_enabled:
+                        follow_enabled = True
+                        logger.info("Follow triggered by key 's'")
                     continue
 
                 # 2. Run YOLO detection.
@@ -163,22 +174,46 @@ class ObjectFollower:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
                     # Send command to robot.
-                    self.move_robot(vx, vy)
+                    if follow_enabled:
+                        self.move_robot(vx, vy)
+                    else:
+                        cv2.putText(
+                            display_img,
+                            "Detected: press 's' to follow",
+                            (10, 80),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 255, 255),
+                            2,
+                        )
                 else:
                     # Reset PID when target is lost.
                     self.pid_x.reset()
                     self.pid_y.reset()
                     cv2.putText(display_img, "Searching...", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    if follow_enabled:
+                        cv2.putText(display_img, "FOLLOWING ENABLED", (10, 55),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
                 # Draw image-center crosshair.
                 cv2.line(display_img, (center_x-20, center_y), (center_x+20, center_y), (255, 0, 0), 1)
                 cv2.line(display_img, (center_x, center_y-20), (center_x, center_y+20), (255, 0, 0), 1)
+                if follow_enabled:
+                    cv2.putText(display_img, "FOLLOWING", (10, self.height - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                else:
+                    cv2.putText(display_img, "IDLE", (10, self.height - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
                 cv2.imshow("Object Follower", display_img)
                 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     break
+                if key == ord('s') and not follow_enabled:
+                    follow_enabled = True
+                    logger.info("Follow triggered by key 's'")
 
         finally:
             self.camera.stop()

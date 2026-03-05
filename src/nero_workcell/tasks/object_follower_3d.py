@@ -82,35 +82,6 @@ class ObjectFollower:
         self.cy = intrinsics.get('cy', 0)
         logger.info(f"Camera intrinsics: fx={self.fx}, fy={self.fy}, cx={self.cx}, cy={self.cy}")
 
-    def move_robot(self, vx: float, vy: float):
-        """
-        Move the robot using PID outputs as relative increments.
-
-        Assumed mapping between camera frame and robot frame:
-        - Image X error -> robot Y motion
-        - Image Y error -> robot X motion
-
-        Adjust axis mapping for your real installation.
-        """
-        if not self.robot.is_connected():
-            return
-
-        # Deadband to suppress tiny jitter.
-        if abs(vx) < 0.001 and abs(vy) < 0.001:
-            return
-
-        try:
-            # Example axis mapping. Tune signs per installation.
-            
-            scale = 0.5
-            dx = -vy * scale
-            dy = -vx * scale
-            
-            # Send relative motion command.
-            self.robot.move_relative(dx=dx, dy=dy)
-            
-        except Exception as e:
-            logger.error(f"Motion control failed: {e}")
     def _yolo_detect(self, color: np.ndarray, depth: np.ndarray) -> List[TargetObject]:
         """
         Run object detection and project valid detections into the camera frame.
