@@ -57,7 +57,7 @@ class NeroController:
     def is_connected(self) -> bool:
         return self._connected and self.robot is not None
 
-    def get_flange_pose(self) -> Optional[np.ndarray]:
+    def get_current_pose(self) -> Optional[np.ndarray]:
         """Get the homogeneous transform (4x4) of flange relative to base."""
         if not self.is_connected():
             return None
@@ -77,6 +77,21 @@ class NeroController:
             return None
         return matrix
 
+    def get_flange_pose(self) -> Optional[List[float]]:
+        """
+        Get robot flange pose as [x, y, z, roll, pitch, yaw].
+        """
+        if not self.is_connected():
+            return None
+        try:
+            pose = self.robot.get_flange_pose()
+            if pose is not None:
+                return list(pose.msg)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get flange pose: {e}")
+            return None
+
     def get_tcp_pose(self) -> Optional[List[float]]:
         """
         Get robot TCP pose as [x, y, z, roll, pitch, yaw].
@@ -86,7 +101,7 @@ class NeroController:
         try:
             pose = self.robot.get_tcp_pose()
             if pose is not None:
-                return pose.msg
+                return list(pose.msg)
             return None
         except Exception as e:
             logger.error(f"Failed to get TCP pose: {e}")

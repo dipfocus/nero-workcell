@@ -170,7 +170,7 @@ class ObjectFollower:
             return {"color": color, "target": None}
 
         # Get current flange pose.
-        T_gripper2base = self.robot.get_flange_pose()
+        T_gripper2base = self.robot.get_current_pose()
         if T_gripper2base is None:
             logger.warning("[detect] Failed to get flange pose: no data")
             return {"color": color, "target": None}
