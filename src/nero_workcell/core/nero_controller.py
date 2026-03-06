@@ -131,6 +131,30 @@ class NeroController:
                 return False
             time.sleep(poll_interval)
 
+    def move_j(self, joints: List[float], blocking: bool = False, timeout: float = 5.0) -> bool:
+        """
+        Send a joint point-to-point motion command.
+
+        :param joints: [j1, j2, j3, j4, j5, j6] (radians)
+        :param blocking: If True, wait until motion is complete.
+        :param timeout: Max wait time in seconds if blocking is True.
+        :return: True if command sent.
+        """
+        assert self.is_connected(), "Robot is not connected"
+        
+        self.robot.move_j(joints)
+        if blocking:
+            return self._wait_motion_done(timeout=timeout)
+        return True
+
+    def move_to_home(self, blocking: bool = True) -> bool:
+        """
+        Move the robot to a safe 'home' position using joint interpolation.
+        """
+        home_joints = [-88, -99, 2.719, 123, 3.036, -2.084, 90]
+        logger.info("Moving to home position: %s", home_joints)
+        return self.move_j(home_joints, blocking=blocking)
+
     def move_p(self, pose: List[float], blocking: bool = False, timeout: float = 5.0) -> bool:
         """
         Send a Cartesian point-to-point motion command.
