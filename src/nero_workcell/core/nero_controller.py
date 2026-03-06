@@ -119,33 +119,72 @@ class NeroController:
             logger.error(f"Failed to get TCP pose: {e}")
             return None
 
-    def move_p(self, pose: List[float]):
+    def get_arm_status(self):
+        """
+        Get the robot arm status structure.
+        """
+        if not self.is_connected():
+            return None
+        try:
+            return self.robot.get_arm_status()
+        except Exception as e:
+            logger.error(f"Failed to get arm status: {e}")
+            return None
+
+    def _wait_motion_done(self, timeout: float = 5.0, poll_interval: float = 0.1) -> bool:
+        """
+        Internal helper: Wait until motion_status == 0 or timeout occurs.
+        """
+        if not self.is_connected():
+            return False
+
+        time.sleep(0.5)  # Initial settling time
+        start_t = time.monotonic()
+        while True:
+            status = self.get_arm_status()
+            if status is not None and getattr(status.msg, "motion_status", None) == 0:
+                return True
+            if time.monotonic() - start_t > timeout:
+                return False
+            time.sleep(poll_interval)
+
+    def move_p(self, pose: List[float], blocking: bool = False, timeout: float = 5.0) -> bool:
         """
         Send a Cartesian point-to-point motion command.
 
         :param pose: [x, y, z, r, p, y]
+        :param blocking: If True, wait until motion is complete.
+        :param timeout: Max wait time in seconds if blocking is True.
+        :return: True if command sent (and completed if blocking), False otherwise.
         """
         if not self.is_connected():
-            return
+            return False
         try:
             self.robot.move_p(pose)
+            if blocking:
+                return self._wait_motion_done(timeout=timeout)
+            return True
         except Exception as e:
             logger.error(f"Failed to send motion command: {e}")
+            return False
 
     def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, 
-                      dr: float = 0.0, dp: float = 0.0, dyaw: float = 0.0):
+                      dr: float = 0.0, dp: float = 0.0, dyaw: float = 0.0,
+                      *, blocking: bool = False, timeout: float = 5.0) -> bool:
         """
         Move relative to the current TCP pose.
 
         :param dx, dy, dz: Position deltas (meters)
         :param dr, dp, dyaw: Orientation deltas (radians)
+        :param blocking: If True, wait until motion is complete.
+        :param timeout: Max wait time in seconds if blocking is True.
         """
         if not self.is_connected():
-            return
+            return False
 
         current_pose = self.get_tcp_pose()
         if current_pose is None:
-            return
+            return False
 
         # Compute target pose by linear delta composition.
         # Orientation composition is an approximation for small angles.
@@ -154,7 +193,7 @@ class NeroController:
         for i in range(6):
             target_pose[i] += deltas[i]
 
-        self.move_p(target_pose)
+        return self.move_p(target_pose, blocking=blocking, timeout=timeout)
 
     def move_gripper(self, width: float, force: float = 1.0):
         """
