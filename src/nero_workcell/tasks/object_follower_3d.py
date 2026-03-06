@@ -5,7 +5,7 @@ Object following task (visual servoing).
 Uses RealSense and YOLO to control the robot arm to follow a target object.
 
 Usage:
-    python -m nero_workcell.tasks.object_follower --target bottle --conf 0.5
+    python -m nero_workcell.tasks.object_follower --target cup --conf 0.5
 """
 
 import logging
@@ -324,7 +324,7 @@ class ObjectFollower:
 
 def main():
     parser = argparse.ArgumentParser(description="Nero Workcell - Object Following Task")
-    parser.add_argument("--target", type=str, default="bottle", help="Target object class name (e.g., bottle, cup)")
+    parser.add_argument("--target", type=str, default="cup", help="Target object class name (e.g., cup, bottle)")
     parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to YOLO model")
     parser.add_argument("--conf", type=float, default=0.2, help="Confidence threshold")
     
