@@ -24,40 +24,42 @@ class NeroController:
         self.end_effector = None
         self._connected = False
 
-    def connect(self, speed_percent: int = 20) -> bool:
+    def connect(self, speed_percent: int = 20, timeout: float = 5.0) -> bool:
         """Connect to the robot arm."""
-        try:
-            cfg = create_agx_arm_config(robot=self.robot_type, comm="can", channel=self.channel)
-            
-            self.robot = AgxArmFactory.create_arm(cfg)
-            self.robot.connect()
+        cfg = create_agx_arm_config(robot=self.robot_type, comm="can", channel=self.channel)
+        
+        self.robot = AgxArmFactory.create_arm(cfg)
+        self.robot.connect()
+        
+        # Enable robot with timeout check
+        start_t = time.monotonic()
+        while True:
             self.robot.enable()
-            self.robot.set_speed_percent(speed_percent)
-            
-            # Initialize end effector (AGX_GRIPPER).
-            try:
-                self.end_effector = self.robot.init_effector(self.robot.OPTIONS.EFFECTOR.AGX_GRIPPER)
-                # Wait for effector to be ready (up to 1.0s)
-                for _ in range(10):
-                    if self.end_effector.is_ok():
-                        break
-                    time.sleep(0.1)
+            time.sleep(0.5)
+            if self.robot.get_arm_status() is not None:
+                break
+            if time.monotonic() - start_t > timeout:
+                raise RuntimeError(f"Failed to enable robot: Timeout ({timeout}s) exceeded")
 
-                if self.end_effector.is_ok():
-                    logger.info("AGX_GRIPPER end effector initialized")
-                else:
-                    logger.warning("Failed to initialize end effector: is_ok() is False")
-                    self.end_effector = None
-            except Exception as e:
-                logger.warning(f"Failed to initialize end effector (possibly not installed or model mismatch): {e}")
-            
-            self._connected = True
-            logger.info(f"Connected to Nero robot arm: {self.channel}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Nero robot arm: {e}")
-            self._connected = False
-            return False
+        self.robot.set_speed_percent(speed_percent)
+        
+        # Initialize end effector (AGX_GRIPPER).
+        self.end_effector = self.robot.init_effector(self.robot.OPTIONS.EFFECTOR.AGX_GRIPPER)
+        # Wait for effector to be ready (up to 1.0s)
+        for _ in range(10):
+            if self.end_effector.is_ok():
+                break
+            time.sleep(0.1)
+
+        if self.end_effector.is_ok():
+            logger.info("AGX_GRIPPER end effector initialized")
+        else:
+            logger.warning("Failed to initialize end effector: is_ok() is False")
+            self.end_effector = None
+        
+        self._connected = True
+        logger.info(f"Connected to Nero robot arm: {self.channel}")
+        return True
 
     def disconnect(self):
         """Disconnect from the robot."""
@@ -71,72 +73,53 @@ class NeroController:
 
     def get_current_pose(self) -> Optional[np.ndarray]:
         """Get the homogeneous transform (4x4) of flange relative to base."""
-        if not self.is_connected():
-            return None
-        try:
-            pose = self.robot.get_flange_pose()
-            if pose is not None:
-                x, y, z, roll, pitch, yaw = pose.msg
-            else:
-                return None
-
-            matrix = np.eye(4)
-            matrix[:3, :3] = R.from_euler('xyz', [roll, pitch, yaw], degrees=False).as_matrix()
-            matrix[:3, 3] = [x, y, z]
+        assert self.is_connected(), "Robot is not connected"
         
-        except Exception as e:
-            logger.error(f"Failed to get flange pose: {e}")
+        pose = self.robot.get_flange_pose()
+        if pose is not None:
+            x, y, z, roll, pitch, yaw = pose.msg
+        else:
             return None
+
+        matrix = np.eye(4)
+        matrix[:3, :3] = R.from_euler('xyz', [roll, pitch, yaw], degrees=False).as_matrix()
+        matrix[:3, 3] = [x, y, z]
         return matrix
 
     def get_flange_pose(self) -> Optional[List[float]]:
         """
         Get robot flange pose as [x, y, z, roll, pitch, yaw].
         """
-        if not self.is_connected():
-            return None
-        try:
-            pose = self.robot.get_flange_pose()
-            if pose is not None:
-                return list(pose.msg)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get flange pose: {e}")
-            return None
+        assert self.is_connected(), "Robot is not connected"
+        
+        pose = self.robot.get_flange_pose()
+        if pose is not None:
+            return list(pose.msg)
+        return None
 
     def get_tcp_pose(self) -> Optional[List[float]]:
         """
         Get robot TCP pose as [x, y, z, roll, pitch, yaw].
         """
-        if not self.is_connected():
-            return None
-        try:
-            pose = self.robot.get_tcp_pose()
-            if pose is not None:
-                return list(pose.msg)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get TCP pose: {e}")
-            return None
+        assert self.is_connected(), "Robot is not connected"
+        
+        pose = self.robot.get_tcp_pose()
+        if pose is not None:
+            return list(pose.msg)
+        return None
 
     def get_arm_status(self):
         """
         Get the robot arm status structure.
         """
-        if not self.is_connected():
-            return None
-        try:
-            return self.robot.get_arm_status()
-        except Exception as e:
-            logger.error(f"Failed to get arm status: {e}")
-            return None
+        assert self.is_connected(), "Robot is not connected"
+        return self.robot.get_arm_status()
 
     def _wait_motion_done(self, timeout: float = 5.0, poll_interval: float = 0.1) -> bool:
         """
         Internal helper: Wait until motion_status == 0 or timeout occurs.
         """
-        if not self.is_connected():
-            return False
+        assert self.is_connected(), "Robot is not connected"
 
         time.sleep(0.5)  # Initial settling time
         start_t = time.monotonic()
@@ -157,16 +140,12 @@ class NeroController:
         :param timeout: Max wait time in seconds if blocking is True.
         :return: True if command sent (and completed if blocking), False otherwise.
         """
-        if not self.is_connected():
-            return False
-        try:
-            self.robot.move_p(pose)
-            if blocking:
-                return self._wait_motion_done(timeout=timeout)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to send motion command: {e}")
-            return False
+        assert self.is_connected(), "Robot is not connected"
+        
+        self.robot.move_p(pose)
+        if blocking:
+            return self._wait_motion_done(timeout=timeout)
+        return True
 
     def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, 
                       dr: float = 0.0, dp: float = 0.0, dyaw: float = 0.0,
@@ -179,8 +158,7 @@ class NeroController:
         :param blocking: If True, wait until motion is complete.
         :param timeout: Max wait time in seconds if blocking is True.
         """
-        if not self.is_connected():
-            return False
+        assert self.is_connected(), "Robot is not connected"
 
         current_pose = self.get_tcp_pose()
         if current_pose is None:
@@ -202,11 +180,9 @@ class NeroController:
         :param width: Jaw width (meters), range [0.0, 0.1]
         :param force: Gripping force (newtons), range [0.0, 3.0]
         """
-        if not self.is_connected() or self.end_effector is None:
-            logger.warning("Cannot control gripper: robot not connected or end effector not initialized")
+        assert self.is_connected(), "Robot is not connected"
+        if self.end_effector is None:
+            logger.warning("Cannot control gripper: end effector not initialized")
             return
 
-        try:
-            self.end_effector.move_gripper(width=width, force=force)
-        except Exception as e:
-            logger.error(f"Gripper control failed: {e}")
+        self.end_effector.move_gripper(width=width, force=force)
