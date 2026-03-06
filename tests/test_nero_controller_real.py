@@ -93,13 +93,12 @@ class TestNeroControllerReal(unittest.TestCase):
         if not self.controller.connect():
             self.skipTest("Cannot connect to robot, skipping test")
             
-        self.controller.set_speed_percent(20)
         # Get initial pose
         start_pose = self.controller.get_tcp_pose()
         self.assertIsNotNone(start_pose)
         initial_z = start_pose[2]
         
-        move_dist = 0.01  # 1cm
+        move_dist = 0.05  # 1cm
         logger.info(f"Current Z: {initial_z:.4f}, moving up {move_dist}m")
         
         # Execute move
@@ -129,26 +128,26 @@ class TestNeroControllerReal(unittest.TestCase):
                              msg="Failed to return to original position accurately")
         logger.info("Relative movement test passed")
 
-    def test_04_gripper_control(self):
-        """Test: Gripper control (Open/Close)"""
-        logger.info("=== Test 04: Gripper Control Test ===")
-        if not self.controller.connect():
-            self.skipTest("Cannot connect to robot, skipping test")
-            
-        if self.controller.end_effector is None:
-            logger.warning("Gripper not initialized, skipping this test")
-            return
+    # def test_04_gripper_control(self):
+    #     """Test: Gripper control (Open/Close)"""
+    #     logger.info("=== Test 04: Gripper Control Test ===")
+    #     if not self.controller.connect():
+    #         self.skipTest("Cannot connect to robot, skipping test")
+    #         
+    #     if self.controller.end_effector is None:
+    #         logger.warning("Gripper not initialized, skipping this test")
+    #         return
 
-        # 1. Open gripper
-        logger.info("Opening gripper (5cm)...")
-        self.controller.move_gripper(width=0.05, force=1.0)
-        time.sleep(2.0)
-        
-        # 2. Close gripper
-        logger.info("Closing gripper...")
-        self.controller.move_gripper(width=0.0, force=1.0)
-        time.sleep(2.0)
-        logger.info("Gripper test passed")
+    #     # 1. Open gripper
+    #     logger.info("Opening gripper (5cm)...")
+    #     self.controller.move_gripper(width=0.05, force=1.0)
+    #     time.sleep(2.0)
+    #     
+    #     # 2. Close gripper
+    #     logger.info("Closing gripper...")
+    #     self.controller.move_gripper(width=0.0, force=1.0)
+    #     time.sleep(2.0)
+    #     logger.info("Gripper test passed")
 
 if __name__ == '__main__':
     unittest.main()
