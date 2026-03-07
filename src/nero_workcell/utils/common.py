@@ -4,7 +4,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 
@@ -12,7 +12,7 @@ from nero_workcell.core.target_object import TargetObject
 
 logger = logging.getLogger(__name__)
 
-def load_eye_in_hand_calibration(calib_file: str) -> Optional[np.ndarray]:
+def load_eye_in_hand_calibration(calib_file: str) -> np.ndarray:
     """
     Load eye-in-hand calibration and build the T_cam2gripper transform matrix.
 
@@ -20,28 +20,41 @@ def load_eye_in_hand_calibration(calib_file: str) -> Optional[np.ndarray]:
         calib_file (str): Path to the eye-in-hand calibration JSON file.
 
     Returns:
-        np.ndarray | None:
-            4x4 homogeneous transform matrix on success;
-            None when the calibration file does not exist.
+        np.ndarray:
+            4x4 homogeneous transform matrix on success.
+
+    Raises:
+        SystemExit:
+            When the calibration file is missing or invalid.
     """
     calib_file = Path(calib_file)
     if not calib_file.exists():
         logger.error(
             f"Calibration file not found: {calib_file}. Run eye-in-hand calibration first."
         )
-        return None
+        raise SystemExit(1)
 
-    with open(calib_file, "r") as f:
-        calib = json.load(f)
+    try:
+        with open(calib_file, "r") as f:
+            calib = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error(f"Failed to read calibration file {calib_file}: {exc}")
+        raise SystemExit(1) from exc
 
     if calib.get("calibration_type") != "eye_in_hand":
         logger.error(
             f"Calibration type is {calib.get('calibration_type')}; expected eye_in_hand"
         )
+        raise SystemExit(1)
 
-    T_cam2gripper = np.eye(4)
-    T_cam2gripper[:3, :3] = np.array(calib["rotation_matrix"])
-    T_cam2gripper[:3, 3] = np.array(calib["translation_vector"])
+    try:
+        T_cam2gripper = np.eye(4)
+        T_cam2gripper[:3, :3] = np.array(calib["rotation_matrix"])
+        T_cam2gripper[:3, 3] = np.array(calib["translation_vector"])
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.error(f"Invalid eye-in-hand calibration content in {calib_file}: {exc}")
+        raise SystemExit(1) from exc
+
     logger.info(
         f"Eye-in-hand calibration loaded: {calib_file}, T_cam2gripper:\n{T_cam2gripper}"
     )
