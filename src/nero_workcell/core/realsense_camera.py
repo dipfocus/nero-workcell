@@ -345,6 +345,15 @@ class RealSenseCamera:
         self.fy = intrinsics_data["fy"]
         self.cx = intrinsics_data["cx"]
         self.cy = intrinsics_data["cy"]
+        logger.info(
+            "Camera intrinsics loaded: width=%s, height=%s, fx=%s, fy=%s, cx=%s, cy=%s",
+            intrinsics_data["width"],
+            intrinsics_data["height"],
+            self.fx,
+            self.fy,
+            self.cx,
+            self.cy,
+        )
         return intrinsics_data
 
     def stop(self):
