@@ -53,6 +53,51 @@ pip install -e .
 > - `pyAgxArm` 来自 GitHub 源码安装，网络需可访问。  
 > - 如果 `pyrealsense2` 安装失败，请先确认系统侧 RealSense 运行环境完整。
 
+## 运行测试
+
+先确保项目已按上文完成可编辑安装：
+
+```bash
+pip install -e .
+```
+
+1. 运行 YOLO + RealSense 真机测试：
+
+```bash
+YOLO_MODEL_PATH=/path/to/yolov8n.pt python tests/test_yolo_detector.py
+```
+
+要求：
+- 已安装 `pyrealsense2` 与 `ultralytics`
+- 已连接 RealSense 相机
+- 画面中放入真实 `cup`
+
+如已在本机缓存 `yolov8n.pt`，也可以省略 `YOLO_MODEL_PATH`：
+
+```bash
+python tests/test_yolo_detector.py
+```
+
+2. 运行 RealSense 真机测试：
+
+```bash
+python tests/test_realsense_camera.py
+```
+
+如有多台相机，可指定序列号：
+
+```bash
+REALSENSE_SERIAL=<serial> python tests/test_realsense_camera.py
+```
+
+3. 运行 Nero 机械臂真机测试：
+
+```bash
+python tests/test_nero_controller_real.py
+```
+
+这些都是真机测试。缺少 `pyAgxArm`、`pyrealsense2`、`ultralytics`，或未连接对应真实硬件时，会直接失败。`test_yolo_detector.py` 在连续多帧都检测不到真实目标物体时，也会直接失败。
+
 ## 快速检查
 
 1. 检查 RealSense 是否可被识别：

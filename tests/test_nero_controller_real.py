@@ -16,23 +16,8 @@ WARNING:
 import unittest
 import time
 import logging
-import sys
-import os
 
-# Try importing NeroController
-# Automatically handle paths to run in different directories
-try:
-    from nero_workcell.core.nero_controller import NeroController
-except ImportError:
-    # If run as a script, add src directory to path
-    # Assumed structure: project_root/tests/test_nero_controller_real.py
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    src_dir = os.path.join(project_root, "src")
-    
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
-    from nero_workcell.core.nero_controller import NeroController
+from nero_workcell.core.nero_controller import NeroController
 
 # Configure logging
 logging.basicConfig(
