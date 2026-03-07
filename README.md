@@ -74,7 +74,7 @@ python tools/get_realsense_serial.py --json
 在仓库根目录执行：
 
 ```bash
-python -m nero_workcell.tasks.object_follower --target bottle --model yolov8n.pt --conf 0.5
+python -m nero_workcell.tasks.follow_static_target --target bottle --model yolov8n.pt --conf 0.5
 ```
 
 参数说明：
