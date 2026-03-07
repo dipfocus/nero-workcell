@@ -15,6 +15,38 @@ logger = logging.getLogger(__name__)
 class RealSenseCamera:
     """Intel RealSense D435i camera."""
 
+    @staticmethod
+    def _validate_intrinsics_data(intrinsics: Dict[str, Any]) -> None:
+        """Reject invalid camera intrinsics instead of propagating bad values."""
+        if intrinsics["width"] <= 0 or intrinsics["height"] <= 0:
+            raise RuntimeError(
+                f"Invalid camera intrinsics image size: {intrinsics['width']}x{intrinsics['height']}"
+            )
+
+        for field in ("fx", "fy", "cx", "cy"):
+            value = intrinsics[field]
+            if not np.isfinite(value):
+                raise RuntimeError(f"Invalid camera intrinsic {field}: {value}")
+
+        if intrinsics["fx"] <= 0 or intrinsics["fy"] <= 0:
+            raise RuntimeError(
+                f"Invalid camera focal lengths: fx={intrinsics['fx']}, fy={intrinsics['fy']}"
+            )
+
+        if not (0.0 <= intrinsics["cx"] < intrinsics["width"]):
+            raise RuntimeError(
+                f"Invalid principal point cx={intrinsics['cx']} for width={intrinsics['width']}"
+            )
+
+        if not (0.0 <= intrinsics["cy"] < intrinsics["height"]):
+            raise RuntimeError(
+                f"Invalid principal point cy={intrinsics['cy']} for height={intrinsics['height']}"
+            )
+
+        distortion_coeffs = intrinsics["distortion_coeffs"]
+        if any(not np.isfinite(coeff) for coeff in distortion_coeffs):
+            raise RuntimeError(f"Invalid distortion coefficients: {distortion_coeffs}")
+
     @classmethod
     def discover_serial_numbers(cls) -> List[str]:
         """Return serial numbers for all connected RealSense devices."""
@@ -99,6 +131,10 @@ class RealSenseCamera:
         self.align = None
         self.profile = None
         self.depth_scale = 1.0
+        self.fx = 0.0
+        self.fy = 0.0
+        self.cx = 0.0
+        self.cy = 0.0
     
     def start(self) -> None:
         try:
@@ -142,6 +178,7 @@ class RealSenseCamera:
             
             self.start_time = time.time()
             self._is_opened = True
+            self.get_intrinsics()
             logger.info(
                 "Camera is ready: device=%s, serial=%s, resolution=%sx%s, fps=%s, depth_scale=%s",
                 device_name,
@@ -277,25 +314,48 @@ class RealSenseCamera:
         try:
             stream = self.profile.get_stream(rs.stream.color)
             intrinsics = stream.as_video_stream_profile().get_intrinsics()
-            return {
-                'width': intrinsics.width,
-                'height': intrinsics.height,
-                'fx': intrinsics.fx,
-                'fy': intrinsics.fy,
-                'cx': intrinsics.ppx,
-                'cy': intrinsics.ppy,
+            intrinsics_data = {
+                'width': int(intrinsics.width),
+                'height': int(intrinsics.height),
+                'fx': float(intrinsics.fx),
+                'fy': float(intrinsics.fy),
+                'cx': float(intrinsics.ppx),
+                'cy': float(intrinsics.ppy),
                 'distortion_model': str(intrinsics.model),
-                'distortion_coeffs': list(intrinsics.coeffs),
+                'distortion_coeffs': [float(coeff) for coeff in intrinsics.coeffs],
             }
         except Exception as e:
             logger.error("Get intrinsics failed: %s", e)
             raise RuntimeError("Failed to get camera intrinsics") from e
-    
+
+        if (
+            intrinsics_data["width"] != self.width
+            or intrinsics_data["height"] != self.height
+        ):
+            logger.warning(
+                "Requested color resolution %sx%s, but camera intrinsics report %sx%s",
+                self.width,
+                self.height,
+                intrinsics_data["width"],
+                intrinsics_data["height"],
+            )
+
+        self._validate_intrinsics_data(intrinsics_data)
+        self.fx = intrinsics_data["fx"]
+        self.fy = intrinsics_data["fy"]
+        self.cx = intrinsics_data["cx"]
+        self.cy = intrinsics_data["cy"]
+        return intrinsics_data
+
     def stop(self):
         if self.pipeline is not None:
             self.pipeline.stop()
             self.pipeline = None
         
         self._is_opened = False
+        self.fx = 0.0
+        self.fy = 0.0
+        self.cx = 0.0
+        self.cy = 0.0
         self.print_stats()
         logger.info("Camera stopped")
