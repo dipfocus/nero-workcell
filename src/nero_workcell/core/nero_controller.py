@@ -8,25 +8,33 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from pyAgxArm import create_agx_arm_config, AgxArmFactory
 
+from .robot_state import RobotState
+
 logger = logging.getLogger(__name__)
 
 class NeroController:
-    def __init__(self, channel: str = "can0", robot_type: str = "nero"):
+    ROBOT_TYPE = "nero"
+
+    def __init__(self, channel: str = "can0"):
         """
         Initialize the controller.
 
         :param channel: CAN channel (for example, "can0", "can")
-        :param robot_type: Robot model (default: "nero")
         """
         self.channel = channel
-        self.robot_type = robot_type
+        self.config = None
         self.robot = None
         self.end_effector = None
         self._connected = False
 
     def connect(self, speed_percent: int = 20, timeout: float = 5.0) -> bool:
         """Connect to the robot arm."""
-        cfg = create_agx_arm_config(robot=self.robot_type, comm="can", channel=self.channel)
+        cfg = create_agx_arm_config(robot=self.ROBOT_TYPE, comm="can", channel=self.channel)
+        assert cfg is not None, "create_agx_arm_config() returned None"
+        assert isinstance(cfg, dict), (
+            f"create_agx_arm_config() returned invalid config type: {type(cfg).__name__}"
+        )
+        self.config = cfg
         
         self.robot = AgxArmFactory.create_arm(cfg)
         self.robot.connect()
@@ -56,7 +64,7 @@ class NeroController:
         else:
             logger.warning("Failed to initialize end effector: is_ok() is False")
             self.end_effector = None
-        
+
         self._connected = True
         logger.info(f"Connected to Nero robot arm: {self.channel}")
         return True
@@ -64,12 +72,67 @@ class NeroController:
     def disconnect(self):
         """Disconnect from the robot."""
         self._connected = False
+        self.config = None
         self.robot = None
         self.end_effector = None
         logger.info("Disconnected from Nero robot arm")
 
     def is_connected(self) -> bool:
         return self._connected and self.robot is not None
+
+    @property
+    def joint_names(self) -> List[str]:
+        assert self.is_connected(), "Robot is not connected"
+        assert self.config is not None, "joint_names requires connect() to initialize config"
+
+        joint_names = self.config.get("joint_names")
+        assert joint_names, "Config missing joint_names"
+        assert not isinstance(joint_names, (str, bytes)), (
+            "Config joint_names must be a sequence of joint names"
+        )
+        return [str(name) for name in joint_names]
+
+    @property
+    def joint_limits(self) -> dict[str, tuple[float, float]]:
+        assert self.config is not None, "joint_limits requires connect() to initialize config"
+        limits = self.config.get("joint_limits", {})
+        return {
+            str(name): (float(bounds[0]), float(bounds[1]))
+            for name, bounds in limits.items()
+        }
+
+    def get_joint_angles(self) -> Optional[List[float]]:
+        """Get robot joint positions as [j1, ..., j7] in radians."""
+        assert self.is_connected(), "Robot is not connected"
+
+        joint_angles = self.robot.get_joint_angles()
+        if joint_angles is not None:
+            return list(joint_angles.msg)
+        logger.warning("Failed to read joint angles: robot.get_joint_angles() returned None")
+        return None
+
+    def get_robot_state(self) -> Optional[RobotState]:
+        """Read the latest joint-space state needed by model-based controllers."""
+        assert self.is_connected(), "Robot is not connected"
+
+        joint_msg = self.robot.get_joint_angles()
+        if joint_msg is None:
+            return None
+
+        joint_angles = list(joint_msg.msg)
+
+        tcp_pose = self.get_tcp_pose()
+        timestamp = float(joint_msg.timestamp)
+
+        tcp_pose_arr = None
+        if tcp_pose is not None:
+            tcp_pose_arr = np.array(tcp_pose, dtype=float)
+
+        return RobotState(
+            joint_positions=np.array(joint_angles, dtype=float),
+            tcp_pose=tcp_pose_arr,
+            timestamp=timestamp,
+        )
 
     def get_current_pose(self) -> Optional[np.ndarray]:
         """Get the homogeneous transform (4x4) of flange relative to base."""
@@ -135,7 +198,7 @@ class NeroController:
         """
         Send a joint point-to-point motion command.
 
-        :param joints: [j1, j2, j3, j4, j5, j6] (radians)
+        :param joints: [j1, j2, j3, j4, j5, j6, j7] (radians)
         :param blocking: If True, wait until motion is complete.
         :param timeout: Max wait time in seconds if blocking is True.
         :return: True if command sent.
@@ -177,6 +240,16 @@ class NeroController:
         if blocking:
             return self._wait_motion_done(timeout=timeout)
         return True
+
+    def set_motion_mode(self, motion_mode: str = "p") -> None:
+        """Set controller motion mode ('p' or 'j')."""
+        assert self.is_connected(), "Robot is not connected"
+        self.robot.set_motion_mode(motion_mode)
+
+    def set_normal_mode(self) -> None:
+        """Switch the arm back to normal single-arm control mode."""
+        assert self.is_connected(), "Robot is not connected"
+        self.robot.set_normal_mode()
 
     def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0, 
                       dr: float = 0.0, dp: float = 0.0, dyaw: float = 0.0,
